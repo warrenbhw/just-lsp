@@ -4,6 +4,8 @@ use super::*;
 pub struct ProjectView<'a> {
   pub(super) document: &'a Document,
   pub(super) documents: Vec<ProjectViewDocument<'a>>,
+  pub(super) project: Option<&'a Project>,
+  pub(super) store: Option<&'a DocumentStore>,
 }
 
 impl<'a> ProjectView<'a> {
@@ -56,6 +58,22 @@ impl<'a> ProjectView<'a> {
 
   #[must_use]
   pub fn find_recipe(&self, name: &str) -> Option<Located<Recipe>> {
+    if let Some((module, rest)) = name.split_once("::") {
+      let project = self.project?;
+      let store = self.store?;
+      let declaration = self
+        .declarations(
+          Document::modules,
+          |module| &module.name.value,
+          |module| module.range.start,
+        )
+        .remove(module)?;
+      let uri = project.modules.get(&declaration.uri)?.get(module)?;
+      let scope = ImportScope::for_root(project, uri);
+      return Self::new(store.get(uri)?, &scope, store)
+        .with_project(project)
+        .find_recipe(rest);
+    }
     self.resolved_recipes().remove(name)
   }
 
@@ -73,9 +91,10 @@ impl<'a> ProjectView<'a> {
   #[must_use]
   pub fn new(
     document: &'a Document,
-    import_scope: &'a ImportScope,
+    import_scope: &ImportScope,
     documents: &'a DocumentStore,
   ) -> Self {
+    let documents_store = documents;
     let documents = import_scope
       .documents()
       .iter()
@@ -96,6 +115,8 @@ impl<'a> ProjectView<'a> {
     Self {
       document,
       documents,
+      project: None,
+      store: Some(documents_store),
     }
   }
 
@@ -116,12 +137,19 @@ impl<'a> ProjectView<'a> {
       |recipe| recipe.range.start,
     )
   }
+
+  pub(super) fn with_project(mut self, project: &'a Project) -> Self {
+    self.project = Some(project);
+    self
+  }
 }
 
 impl<'a> From<&'a Document> for ProjectView<'a> {
   fn from(document: &'a Document) -> Self {
     Self {
       document,
+      project: None,
+      store: None,
       documents: vec![ProjectViewDocument {
         document,
         load_depth: 0,
@@ -133,6 +161,73 @@ impl<'a> From<&'a Document> for ProjectView<'a> {
 #[cfg(test)]
 mod tests {
   use {super::*, indoc::indoc, pretty_assertions::assert_eq};
+
+  #[test]
+  fn qualified_dependencies_resolve_without_leaking_module_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+      dir.path().join("justfile"),
+      "[private]\nmod linting 'lint.just'\ncheck: (linting::all 'true')\n",
+    )
+    .unwrap();
+    fs::write(
+      dir.path().join("lint.just"),
+      indoc! {
+        "
+      import 'shared.just'
+      mod nested 'nested.just'
+      [arg('check', long, value='true')]
+      all check='false':
+      "
+      },
+    )
+    .unwrap();
+    fs::write(dir.path().join("shared.just"), "imported:\n").unwrap();
+    fs::write(dir.path().join("nested.just"), "leaf:\n").unwrap();
+    let uri = lsp::Url::from_file_path(dir.path().join("justfile")).unwrap();
+    let mut store = DocumentStore::default();
+    let project = ProjectLoader::load(&mut store, &uri).unwrap();
+    let document = store.get(&uri).unwrap();
+    let view = ProjectView::new(document, &project.import_scope, &store)
+      .with_project(&project);
+    for name in ["linting::all", "linting::imported", "linting::nested::leaf"] {
+      assert!(view.find_recipe(name).is_some(), "{name}");
+    }
+    for name in ["all", "imported", "linting::missing", "missing::all"] {
+      assert!(view.find_recipe(name).is_none(), "{name}");
+    }
+    assert!(!document.tree.root_node().has_error());
+    assert!(Analyzer { config: None, view }.analyze().is_empty());
+  }
+
+  #[test]
+  fn qualified_dependencies_use_open_module_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+      dir.path().join("justfile"),
+      "mod child\ncheck: child::unsaved\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("child.just"), "saved:\n").unwrap();
+    let uri = lsp::Url::from_file_path(dir.path().join("justfile")).unwrap();
+    let mut store = DocumentStore::default();
+    store
+      .open(lsp::DidOpenTextDocumentParams {
+        text_document: lsp::TextDocumentItem {
+          uri: lsp::Url::from_file_path(dir.path().join("child.just")).unwrap(),
+          language_id: "just".into(),
+          version: 1,
+          text: "unsaved:\n".into(),
+        },
+      })
+      .unwrap();
+    let project = ProjectLoader::load(&mut store, &uri).unwrap();
+    let view =
+      ProjectView::new(store.get(&uri).unwrap(), &project.import_scope, &store)
+        .with_project(&project);
+    assert!(view.find_recipe("child::unsaved").is_some());
+    assert!(view.find_recipe("child::saved").is_none());
+  }
 
   #[test]
   fn direct_import_overrides_nested_import() {
@@ -166,6 +261,8 @@ mod tests {
     .unwrap();
 
     let view = ProjectView {
+      project: None,
+      store: None,
       document: &root,
       documents: vec![
         ProjectViewDocument {
@@ -220,6 +317,8 @@ mod tests {
     .unwrap();
 
     let view = ProjectView {
+      project: None,
+      store: None,
       document: &root,
       documents: vec![
         ProjectViewDocument {
@@ -298,6 +397,8 @@ mod tests {
     .unwrap();
 
     let view = ProjectView {
+      project: None,
+      store: None,
       document: &root,
       documents: vec![
         ProjectViewDocument {

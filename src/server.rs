@@ -1541,6 +1541,31 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn qualified_dependency_module_edits_republish_diagnostics() -> Result {
+    Test::new()
+      .file("child.just", "all:\n")
+      .ready()
+      .open("justfile", "[private]\nmod child\ncheck: child::all\n")
+      .diagnostics("justfile", Some(1), [])
+      .open("child.just", "other:\n")
+      .diagnostics("child.just", Some(1), [])
+      .diagnostics(
+        "justfile",
+        Some(1),
+        [Diagnostic {
+          id: "unresolved-dependency".into(),
+          ..Diagnostic::error(
+            "Recipe `child::all` not found",
+            lsp::Range::at(2, 7, 2, 17),
+          )
+        }
+        .into()],
+      )
+      .run()
+      .await
+  }
+
+  #[tokio::test]
   async fn dependency_open_republishes_root_diagnostics() -> Result {
     Test::new()
       .file("foo.just", "")

@@ -5,6 +5,7 @@ pub struct Project {
   pub dependencies: HashMap<lsp::Url, Vec<ProjectDependency>>,
   pub dependents: HashMap<lsp::Url, HashSet<lsp::Url>>,
   pub import_scope: ImportScope,
+  pub modules: HashMap<lsp::Url, HashMap<String, lsp::Url>>,
   pub root: lsp::Url,
 }
 
@@ -83,6 +84,7 @@ impl Project {
       dependents: HashMap::new(),
       import_scope,
       root,
+      modules: HashMap::new(),
     }
   }
 }

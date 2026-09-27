@@ -103,6 +103,38 @@ impl<'a> ProjectLoader<'a> {
       self.add_dependency(uri, import)?;
     }
 
+    for module in self.documents.load(uri)?.modules() {
+      if !module
+        .attributes
+        .iter()
+        .filter_map(Attribute::condition)
+        .reduce(|left, right| left || right)
+        .unwrap_or(true)
+      {
+        continue;
+      }
+      let Some(path) = module.resolve(uri) else {
+        continue;
+      };
+      let Some(target) = lsp::Url::from_path(&path.clean()) else {
+        continue;
+      };
+      self.project.add_dependent(&target, uri);
+      if self.active.contains(&target) || self.documents.load(&target).is_err()
+      {
+        continue;
+      }
+      if !self.expanded.contains(&target) {
+        self.visit(&target)?;
+      }
+      self
+        .project
+        .modules
+        .entry(uri.clone())
+        .or_default()
+        .insert(module.name.value, target);
+    }
+
     self.active.remove(uri);
     self.expanded.insert(uri.clone());
 

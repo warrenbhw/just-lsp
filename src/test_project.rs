@@ -28,6 +28,8 @@ impl TestProject {
 
   pub(super) fn view(&self) -> ProjectView<'_> {
     ProjectView {
+      project: None,
+      store: None,
       document: &self.document,
       documents: once(&self.document)
         .chain(&self.imported_documents)

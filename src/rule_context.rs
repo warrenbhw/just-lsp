@@ -396,6 +396,8 @@ mod tests {
         .unwrap();
 
     let view = ProjectView {
+      project: None,
+      store: None,
       document: &document,
       documents: vec![
         ProjectViewDocument {

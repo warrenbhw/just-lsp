@@ -22,11 +22,11 @@ impl ImportScope {
   }
 }
 
-impl From<&Project> for ImportScope {
-  fn from(project: &Project) -> Self {
+impl ImportScope {
+  pub(super) fn for_root(project: &Project, root: &lsp::Url) -> Self {
     let mut depths = HashMap::new();
 
-    let mut stack = vec![(0, project.root.clone())];
+    let mut stack = vec![(0, root.clone())];
 
     while let Some((depth, source)) = stack.pop() {
       if depths.contains_key(&source) {
@@ -44,8 +44,8 @@ impl From<&Project> for ImportScope {
 
     let mut documents = Vec::new();
 
-    let mut seen = HashSet::from([project.root.clone()]);
-    let mut stack = vec![project.root.clone()];
+    let mut seen = HashSet::from([root.clone()]);
+    let mut stack = vec![root.clone()];
 
     while let Some(source) = stack.pop() {
       documents.push(ImportScopeDocument {
@@ -66,5 +66,11 @@ impl From<&Project> for ImportScope {
     }
 
     Self { documents }
+  }
+}
+
+impl From<&Project> for ImportScope {
+  fn from(project: &Project) -> Self {
+    Self::for_root(project, &project.root)
   }
 }
